@@ -1,0 +1,6 @@
+gradio==4.44.1
+youtube-transcript-api==1.2.1
+faiss-cpu>=1.9
+langchain==0.2.6
+langchain-community==0.2.6
+huggingface_hub>=0.19.3,<1.0
