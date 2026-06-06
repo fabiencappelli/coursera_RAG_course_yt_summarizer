@@ -1,8 +1,15 @@
 # Import necessary libraries for the YouTube bot
 import gradio as gr
+import os
 import re
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import IpBlocked, RequestBlocked
+from youtube_transcript_api._errors import (
+    IpBlocked,
+    NoTranscriptFound,
+    NotTranslatable,
+    RequestBlocked,
+    TranslationLanguageNotAvailable,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains import LLMChain
@@ -50,7 +57,8 @@ def get_video_id(url: str):
 
 def get_transcript(url: str):
     """
-    Fetch transcript, prioritizing manual French transcript over generated one.
+    Fetch transcript, prioritizing manual French, then generated French, then
+    a YouTube-translated French transcript when available.
     """
     video_id = get_video_id(url)
     if not video_id:
@@ -66,26 +74,36 @@ def get_transcript(url: str):
             "Essaie d'exécuter le script en local sur ta machine."
         ) from e
 
-    transcript = None
-    generated_fallback = None
+    try:
+        try:
+            return transcripts.find_manually_created_transcript(["fr"]).fetch()
+        except NoTranscriptFound:
+            pass
 
-    for t in transcripts:
-        if t.language_code == "fr":
-            if t.is_generated:
-                if generated_fallback is None:
-                    generated_fallback = t.fetch()
-            else:
-                transcript = t.fetch()
-                break
+        try:
+            return transcripts.find_generated_transcript(["fr"]).fetch()
+        except NoTranscriptFound:
+            pass
 
-    transcript = transcript or generated_fallback
+        for transcript in transcripts:
+            if not transcript.is_translatable:
+                continue
 
-    if not transcript:
+            try:
+                return transcript.translate("fr").fetch()
+            except (NotTranslatable, TranslationLanguageNotAvailable):
+                continue
+    except (IpBlocked, RequestBlocked) as e:
         raise RuntimeError(
-            "Aucune transcription française n'est disponible pour cette vidéo."
-        )
+            "YouTube bloque les requêtes de transcription depuis cet environnement. "
+            "Essaie d'exécuter le script en local sur ta machine ou configure un proxy "
+            "compatible avec youtube-transcript-api."
+        ) from e
 
-    return transcript
+    raise RuntimeError(
+        "Aucune transcription française ou traduisible en français n'est disponible "
+        "pour cette vidéo."
+    )
 
 
 def process(transcript):
@@ -290,33 +308,47 @@ def get_transcript_status(video_url):
         return f"Erreur de transcription : {e}"
 
 
-with gr.Blocks() as interface:
-    gr.Markdown(
-        "<h2 style='text-align: center;'>Résumé et Questions/Réponses sur une vidéo YouTube (Local Qwen - Français)</h2>"
+def build_interface():
+    with gr.Blocks() as interface:
+        gr.Markdown(
+            "<h2 style='text-align: center;'>Résumé et Questions/Réponses sur une vidéo YouTube (Local Qwen - Français)</h2>"
+        )
+
+        video_url = gr.Textbox(
+            label="URL de la vidéo YouTube",
+            placeholder="Entre l'URL de la vidéo YouTube",
+        )
+
+        transcript_status = gr.Textbox(
+            label="Statut de la transcription", interactive=False
+        )
+        summary_output = gr.Textbox(label="Résumé de la vidéo", lines=6)
+        question_input = gr.Textbox(
+            label="Poser une question sur la vidéo",
+            placeholder="Pose ta question en français",
+        )
+        answer_output = gr.Textbox(label="Réponse à ta question", lines=8)
+
+        fetch_btn = gr.Button("Récupérer la transcription")
+        summarize_btn = gr.Button("Résumer la vidéo")
+        question_btn = gr.Button("Poser la question")
+
+        fetch_btn.click(get_transcript_status, inputs=video_url, outputs=transcript_status)
+        summarize_btn.click(summarize_video, inputs=video_url, outputs=summary_output)
+        question_btn.click(
+            answer_question, inputs=[video_url, question_input], outputs=answer_output
+        )
+
+    return interface
+
+
+def main():
+    server_port = os.getenv("GRADIO_SERVER_PORT")
+    build_interface().launch(
+        server_name=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
+        server_port=int(server_port) if server_port else None,
     )
 
-    video_url = gr.Textbox(
-        label="URL de la vidéo YouTube", placeholder="Entre l'URL de la vidéo YouTube"
-    )
 
-    transcript_status = gr.Textbox(
-        label="Statut de la transcription", interactive=False
-    )
-    summary_output = gr.Textbox(label="Résumé de la vidéo", lines=6)
-    question_input = gr.Textbox(
-        label="Poser une question sur la vidéo",
-        placeholder="Pose ta question en français",
-    )
-    answer_output = gr.Textbox(label="Réponse à ta question", lines=8)
-
-    fetch_btn = gr.Button("Récupérer la transcription")
-    summarize_btn = gr.Button("Résumer la vidéo")
-    question_btn = gr.Button("Poser la question")
-
-    fetch_btn.click(get_transcript_status, inputs=video_url, outputs=transcript_status)
-    summarize_btn.click(summarize_video, inputs=video_url, outputs=summary_output)
-    question_btn.click(
-        answer_question, inputs=[video_url, question_input], outputs=answer_output
-    )
-
-interface.launch(server_name="0.0.0.0", server_port=7860)
+if __name__ == "__main__":
+    main()

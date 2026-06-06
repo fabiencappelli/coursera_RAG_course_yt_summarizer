@@ -7,19 +7,24 @@ A simple local RAG-style app that:
 - answers questions about the video
 - uses a local LLM with **Ollama**
 - uses **FAISS** for similarity search over transcript chunks
+- provides English (`ytbot.py`) and French (`ytbot-fr.py`) interfaces
 
 ## Requirements
 
-- **Python 3.11**
+- **Python 3.11** or **Python 3.13**
 - **Ollama** installed locally
 - internet access to fetch YouTube transcripts
 - enough RAM to run the local model
 
 ## Important note about Python version
 
-This project is intended to run with **Python 3.11**.
+This project was originally intended for **Python 3.11**. It now also supports
+**Python 3.13** by installing `audioop-lts`, which restores the `audioop` module
+needed by Gradio's audio dependency stack.
 
-Using Python 3.13 may fail because some dependencies used by Gradio still rely on modules removed from Python 3.13.
+`requirements.txt` also pins `fastapi==0.115.12` and `starlette==0.46.2`.
+Without these pins, a fresh install can pull newer pre-1.0 compatible-looking
+versions that break Gradio 4.44.1 at runtime.
 
 ## Project dependencies
 
@@ -99,14 +104,27 @@ After activating your Python environment:
 python ytbot.py
 ```
 
-The Gradio app should start locally, typically on:
+For the French interface:
+
+```bash
+python ytbot-fr.py
+```
+
+The Gradio app starts locally on:
 
 http://127.0.0.1:7860
+
+If that port is already in use, Gradio can choose another available port. You
+can also set the host or port explicitly:
+
+```bash
+GRADIO_SERVER_NAME=127.0.0.1 GRADIO_SERVER_PORT=7861 python ytbot.py
+```
 
 # How it works
 
 1. You paste a YouTube URL
-2. The app fetches the English transcript
+2. The app fetches a transcript for the selected interface language
 3. The transcript is processed and split into chunks
 4. Chunks are embedded locally with nomic-embed-text
 5. A FAISS index is created for semantic retrieval
@@ -114,11 +132,29 @@ http://127.0.0.1:7860
    - a summary of the video
    - answers to questions grounded in the transcript
 
+## Transcript language behavior
+
+`ytbot.py` prioritizes:
+
+1. manual English transcript
+2. generated English transcript
+3. YouTube-translated English transcript, when available
+
+`ytbot-fr.py` prioritizes:
+
+1. manual French transcript
+2. generated French transcript
+3. YouTube-translated French transcript, when available
+
 # Notes
 
 ## YouTube transcript access
 
-If you run this project in some cloud or lab environments, YouTube may block transcript requests based on IP. In that case, run the app locally on your own machine.
+If you run this project in some cloud or lab environments, YouTube may block
+transcript requests based on IP. The app now catches blocks that happen both
+when listing transcripts and when fetching or translating a transcript, then
+shows a readable error message in the UI. If this happens, run the app locally
+on your own machine or configure a proxy supported by `youtube-transcript-api`.
 
 ## Ollama is not a Python package
 
@@ -141,6 +177,17 @@ ollama pull nomic-embed-text
 python ytbot.py
 ```
 
+For Python 3.13 with conda:
+
+```bash
+conda create -n yt-rag python=3.13 -y
+conda activate yt-rag
+pip install -r requirements.txt
+ollama pull qwen2.5:3b
+ollama pull nomic-embed-text
+python ytbot.py
+```
+
 Using venv:
 
 ```bash
@@ -152,11 +199,29 @@ ollama pull nomic-embed-text
 python ytbot.py
 ```
 
+Run `python ytbot-fr.py` instead when you want the French interface.
+
 # Troubleshooting
 
 `ModuleNotFoundError: audioop`
 
-You are probably using Python 3.13. Recreate the environment with Python 3.11.
+You are using Python 3.13 without `audioop-lts`. Run:
+
+```bash
+pip install -r requirements.txt
+```
+
+If the environment was created before this dependency was added, reinstalling
+the requirements is enough.
+
+`TypeError: unhashable type: 'dict'` when opening Gradio
+
+Your environment likely has incompatible `fastapi` or `starlette` versions.
+Run:
+
+```bash
+pip install -r requirements.txt
+```
 
 `IpBlocked` from `youtube-transcript-api`
 
@@ -165,6 +230,16 @@ YouTube is likely blocking requests from the current environment. Try running th
 `ollama: command not found`
 
 Ollama is not installed yet, or it is not in your PATH.
+
+`Connection refused` or Ollama model errors
+
+Make sure Ollama is running and the models are installed:
+
+```bash
+ollama list
+ollama pull qwen2.5:3b
+ollama pull nomic-embed-text
+```
 
 # Future improvements
 
